@@ -34,8 +34,23 @@ type Responder = {
 }
 
 // Faz o papel do motor: responde as chamadas que o painel faz em `$`.
-function responder(on: Responder['on'], usoComFalha = false) {
+function responder(
+  on: Responder['on'],
+  usoComFalha = false,
+  preenchidos: { text: string; mode?: string }[] = [],
+  caixaAceita = true,
+  nomesDaRaiz?: string[],
+  avisos: string[] = [],
+) {
   on('command.register', () => ({ value: { command: 'atividade' } }))
+  on('prompt.fill', (_: unknown, e: { text: string; mode?: string }) => {
+    preenchidos.push({ text: e.text, mode: e.mode })
+    return { isFilled: caixaAceita }
+  })
+  on('ui.toast', (_: unknown, e: { text: string }) => {
+    avisos.push(e.text)
+    return { value: undefined }
+  })
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('tool.call', () => ({ result: {} }))
@@ -69,12 +84,14 @@ function responder(on: Responder['on'], usoComFalha = false) {
     // O motor entrega o caminho no formato do sistema: barras invertidas no Windows.
     value: (e.path ?? '').replace(/\\/g, '/').endsWith('/src')
       ? [entrada('app.ts', 'file', 1500), entrada('util.ts', 'file', 300)]
-      : [
-          entrada('src', 'dir'),
-          entrada('README.md', 'file', 2048),
-          entrada('dados.fdb', 'file', 5_000_000),
-          entrada('notas.xyz', 'file', 10),
-        ],
+      : nomesDaRaiz !== undefined
+        ? nomesDaRaiz.map(n => entrada(n, 'file', 10))
+        : [
+            entrada('src', 'dir'),
+            entrada('README.md', 'file', 2048),
+            entrada('dados.fdb', 'file', 5_000_000),
+            entrada('notas.xyz', 'file', 10),
+          ],
   }))
 }
 
@@ -161,11 +178,69 @@ test('um arquivo editado entra em Alterados e marca a pasta', async ($, on) => {
   expect(await remontado.find({ type: 'Text', text: /Alterados na sessão/ })).toBeDefined()
   expect(await remontado.find({ type: 'Text', text: /Nenhum arquivo alterado/ })).toBeUndefined()
 
-  // Clicar no arquivo alterado abre a pasta dele.
-  await remontado.press({ key: 'alt:c:/proj/src/app.ts' })
-  expect(await remontado.find({ type: 'Text', text: /proj\/src$/ })).toBeDefined()
-
   await remontado.unmount()
+})
+
+test('clicar em um arquivo insere a menção na caixa de prompt', async ($, on) => {
+  const preenchidos: { text: string; mode?: string }[] = []
+  responder(on, false, preenchidos)
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+
+  // Arquivo na raiz.
+  await ui.press({ key: 'arq:c:/proj/readme.md' })
+  expect(preenchidos).toEqual([{ text: '@README.md ', mode: 'insert' }])
+
+  // Arquivo em uma subpasta: o caminho é relativo à raiz do projeto.
+  await ui.press({ key: 'dir:src' })
+  await ui.press({ key: 'arq:c:/proj/src/util.ts' })
+  expect(preenchidos[1]).toEqual({ text: '@src/util.ts ', mode: 'insert' })
+
+  // Clicar em uma pasta só navega: não menciona nada.
+  expect(preenchidos.length).toBe(2)
+  await ui.unmount()
+})
+
+test('um arquivo alterado também vira menção ao clicar', async ($, on) => {
+  const preenchidos: { text: string; mode?: string }[] = []
+  responder(on, false, preenchidos)
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  await $.tool.call({
+    tool: 'Edit',
+    file_path: 'C:\\proj\\src\\app.ts',
+    old_string: 'a',
+    new_string: 'b',
+  })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  await ui.press({ key: 'alt:c:/proj/src/app.ts' })
+  expect(preenchidos).toEqual([{ text: '@src/app.ts ', mode: 'insert' }])
+  await ui.unmount()
+})
+
+test('caminho com espaço vai entre aspas na menção', async ($, on) => {
+  const preenchidos: { text: string; mode?: string }[] = []
+  responder(on, false, preenchidos, true, ['meu arquivo.md'])
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  await ui.press({ key: 'arq:c:/proj/meu arquivo.md' })
+  expect(preenchidos).toEqual([{ text: '@"meu arquivo.md" ', mode: 'insert' }])
+  await ui.unmount()
+})
+
+test('se a caixa de prompt recusar, o painel não quebra', async ($, on) => {
+  const avisos: string[] = []
+  responder(on, false, [], false, undefined, avisos)
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  await ui.press({ key: 'arq:c:/proj/readme.md' })
+  expect(avisos).toEqual(['A caixa de prompt não aceitou a menção.'])
+  expect(await ui.find({ key: 'dir:src' })).toBeDefined()
+  await ui.unmount()
 })
 
 test('em um painel baixo, avisa dos itens que não cabem', async ($, on) => {

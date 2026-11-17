@@ -3,8 +3,8 @@
 Painel lateral para o Claude Code. O painel tem quatro cartões:
 
 1. **Sessão**: projeto, repositório, modelo, barra de contexto e limites de uso de 5 horas e 7 dias.
-2. **Arquivos**: os arquivos da pasta de trabalho, com ícones. Clique em uma pasta para entrar nela.
-3. **Alterados na sessão**: os arquivos que o Claude editou nesta sessão.
+2. **Arquivos**: os arquivos da pasta de trabalho, com ícones. Clique em uma pasta para entrar nela. Clique em um arquivo para inserir `@caminho` na caixa de prompt.
+3. **Alterados na sessão**: os arquivos que o Claude editou nesta sessão. Clique em um arquivo para inserir `@caminho` na caixa de prompt.
 4. **Atividade**: as chamadas de ferramenta mais recentes.
 
 O mod só lê dados locais. Ele não faz chamadas de rede e não envia dados para fora da máquina.

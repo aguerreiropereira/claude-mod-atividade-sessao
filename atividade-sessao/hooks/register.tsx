@@ -110,6 +110,13 @@ function relativo(raiz: string, absoluto: string): string | null {
     : null
 }
 
+// Texto de menção no formato do Claude Code: `@caminho `. Caminho com espaço
+// vai entre aspas. O espaço final deixa o cursor pronto para continuar.
+function mencao(relativoRaiz: string): string {
+  const caminho = barras(relativoRaiz)
+  return /\s/.test(caminho) ? `@"${caminho}" ` : `@${caminho} `
+}
+
 // Barra de progresso em texto, em duas partes: a cheia (`████`) e a vazia
 // (`░░░░`). Assim cada parte recebe uma cor. Limita o valor entre 0 e 100.
 function partesBarra(percentual: number, largura: number): [string, string] {
@@ -248,6 +255,18 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PAINEL }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
+
+    // Insere `@caminho ` na caixa de prompt, onde está o cursor. O texto que a
+    // pessoa já digitou fica como está. Se a caixa não aceitar, avisa.
+    const mencionar = (rel: string) => {
+      $.prompt
+        .fill({ text: mencao(rel), mode: 'insert' })
+        .then(r => {
+          if (!r.isFilled) $.ui.toast('A caixa de prompt não aceitou a menção.')
+        })
+        .catch(() => $.ui.toast('Não foi possível mencionar o arquivo.'))
+    }
+
     const lista = await read($, chamadas)
     const caminho = await read($, trilha)
     const todosAlterados = await read($, alterados)
@@ -520,20 +539,28 @@ export const register: Register = on => {
             }
             const mudou = chavesAlteradas.has(dele)
 
+            const rel = relativo(raiz, `${pasta}/${f.name}`)
+
             return (
               <Box justifyContent="space-between">
                 <Box flexShrink={1}>
-                  <Text>
-                    {f.kind === 'file' ? iconeArquivo(f.name) : ICONE_LINK}{' '}
-                  </Text>
-                  <Text
-                    color={mudou ? COR_ALTERADOS : undefined}
-                    bold={mudou}
-                    wrap="truncate-end"
+                  <Button
+                    key={`arq:${dele}`}
+                    plain
+                    onPress={() => rel !== null && mencionar(rel)}
                   >
-                    {f.name}
-                  </Text>
-                  {mudou && <Text color={COR_ALTERADOS}> ●</Text>}
+                    <Text>
+                      {f.kind === 'file' ? iconeArquivo(f.name) : ICONE_LINK}{' '}
+                    </Text>
+                    <Text
+                      color={mudou ? COR_ALTERADOS : undefined}
+                      bold={mudou}
+                      wrap="truncate-end"
+                    >
+                      {f.name}
+                    </Text>
+                    {mudou && <Text color={COR_ALTERADOS}> ●</Text>}
+                  </Button>
                 </Box>
                 {f.kind === 'file' && (
                   <Box flexShrink={0} marginLeft={1}>
@@ -591,9 +618,7 @@ export const register: Register = on => {
               <Button
                 key={`alt:${chave(abs)}`}
                 plain
-                onPress={() =>
-                  update($, trilha, () => rel.split('/').slice(0, -1))
-                }
+                onPress={() => mencionar(rel)}
               >
                 <Text>{iconeArquivo(nome)} </Text>
                 <Text dimColor>{dir}</Text>
