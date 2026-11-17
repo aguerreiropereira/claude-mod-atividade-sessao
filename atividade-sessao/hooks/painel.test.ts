@@ -240,6 +240,27 @@ test('um arquivo alterado fora da raiz vira menção com o caminho completo', as
   await ui.unmount()
 })
 
+test('um caminho longo fica em uma linha só, cortado no começo', async ($, on) => {
+  responder(on)
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const longo = 'C:\\pasta muito longa\\com muitas subpastas\\e mais uma\\arquivo-com-nome-grande.txt'
+  const dentro = 'C:\\proj\\a\\b\\c\\d\\e\\f\\g\\h\\i\\j\\k\\arquivo-com-nome-grande.txt'
+  await $.tool.call({ tool: 'Write', file_path: longo, content: 'x' })
+  await $.tool.call({ tool: 'Write', file_path: dentro, content: 'x' })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+
+  // bodyColumns 48: sobram 40 colunas para o caminho. Nenhum texto passa disso.
+  const fora = await ui.find({ type: 'Text', text: /^….*arquivo-com-nome-grande\.txt$/ })
+  expect(fora).toBeDefined()
+  expect(Array.from(fora?.text ?? '').length).toBeLessThanOrEqual(40)
+
+  // Dentro da raiz: o início é cortado, e o nome do arquivo fica inteiro.
+  expect(await ui.find({ type: 'Text', text: /^arquivo-com-nome-grande\.txt$/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('caminho com espaço vai entre aspas na menção', async ($, on) => {
   const preenchidos: { text: string; mode?: string }[] = []
   responder(on, false, preenchidos, true, ['meu arquivo.md'])
@@ -263,19 +284,131 @@ test('se a caixa de prompt recusar, o painel não quebra', async ($, on) => {
   await ui.unmount()
 })
 
-test('em um painel baixo, avisa dos itens que não cabem', async ($, on) => {
+const BAIXO = {
+  ...PAINEL,
+  surface: 'desktop',
+  // 24 linhas: o cartão Sessão e os outros cartões deixam 3 linhas para a lista.
+  viewport: { columns: 48, rows: 24 },
+} as const
+
+const muitos = (n: number) =>
+  Array.from({ length: n }, (_, i) => `arq${String(i + 1).padStart(2, '0')}.txt`)
+
+// O que a roda do mouse (ou uma tecla) manda para o painel.
+const rolar = ($: any, by: number, comPonteiro = true) =>
+  $.ui.scroll({
+    component: 'Pane',
+    requestId: 'atividade-sessao',
+    offset: 0,
+    by,
+    bodyRows: 40,
+    contentRows: 60,
+    origin: { kind: 'person' },
+    ...(comPonteiro ? { pointer: { column: 5, row: 10 } } : {}),
+  })
+
+test('em um painel baixo, a lista mostra uma faixa e a barra de rolagem', async ($, on) => {
   responder(on)
   await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
 
-  // 24 linhas: o cartão Sessão e os outros cartões deixam 3 linhas para a lista.
-  const ui = await $.ui.mount({
-    ...PAINEL,
-    surface: 'desktop',
-    viewport: { columns: 48, rows: 24 },
-  })
+  const ui = await $.ui.mount(BAIXO)
 
-  expect(await ui.find({ type: 'Text', text: /4 itens/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /\+ 1 item oculto/ })).toBeDefined()
+  // Cabem 3 dos 4 itens: o resumo mostra a faixa, e a barra aparece.
+  expect(await ui.find({ type: 'Text', text: /1–3 de 4/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^█$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /item oculto|itens ocultos/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a roda do mouse rola a lista de arquivos e a barra acompanha', async ($, on) => {
+  responder(on, false, [], true, muitos(40))
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount(BAIXO)
+  expect(await ui.find({ type: 'Text', text: /1–3 de 40/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /arq01\.txt/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /arq04\.txt/ })).toBeUndefined()
+
+  // Um tique de roda vale 3 linhas.
+  await rolar($, 1)
+  expect(await ui.find({ type: 'Text', text: /4–6 de 40/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /arq04\.txt/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /arq01\.txt/ })).toBeUndefined()
+
+  // Passar do fim para no último grupo.
+  await rolar($, 500)
+  expect(await ui.find({ type: 'Text', text: /38–40 de 40/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /arq40\.txt/ })).toBeDefined()
+
+  // Passar do começo para no primeiro.
+  await rolar($, -500)
+  expect(await ui.find({ type: 'Text', text: /1–3 de 40/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('as teclas rolam pelo valor que o motor manda', async ($, on) => {
+  responder(on, false, [], true, muitos(40))
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount(BAIXO)
+  // Uma seta vale 1 linha: sem ponteiro, o valor passa como veio.
+  await rolar($, 1, false)
+  expect(await ui.find({ type: 'Text', text: /2–4 de 40/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a pesquisa filtra os itens da pasta pelo nome', async ($, on) => {
+  responder(on)
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  expect(await ui.find({ key: 'busca' })).toBeDefined()
+  expect(await ui.find({ key: 'limpar-busca' })).toBeUndefined()
+
+  // Sem diferenciar maiúsculas de minúsculas.
+  await ui.input({ key: 'busca', text: 'READ', kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: /README\.md/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /dados\.fdb/ })).toBeUndefined()
+  expect(await ui.find({ key: 'dir:src' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /1 de 4/ })).toBeDefined()
+
+  // O botão ✕ limpa a pesquisa.
+  await ui.press({ key: 'limpar-busca' })
+  expect(await ui.find({ type: 'Text', text: /dados\.fdb/ })).toBeDefined()
+  expect(await ui.find({ key: 'dir:src' })).toBeDefined()
+  expect(await ui.find({ key: 'limpar-busca' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a pesquisa sem resultado avisa, e entrar em uma pasta limpa a pesquisa', async ($, on) => {
+  responder(on)
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  await ui.input({ key: 'busca', text: 'zzz', kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: /Nenhum item com “zzz”/ })).toBeDefined()
+
+  // Com a pesquisa "sr", só a pasta src aparece. Entrar nela limpa o campo.
+  await ui.input({ key: 'busca', text: 'sr', kind: 'change' })
+  await ui.press({ key: 'dir:src' })
+  expect((await ui.find({ key: 'busca' }))?.text ?? '').toBe('')
+  expect(await ui.find({ type: 'Text', text: /util\.ts/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a pesquisa volta a rolagem ao começo', async ($, on) => {
+  responder(on, false, [], true, muitos(40))
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount(BAIXO)
+  // Só `by: 1` com ponteiro vale 3 linhas. Outro valor passa como veio.
+  await rolar($, 5)
+  expect(await ui.find({ type: 'Text', text: /6–8 de 40/ })).toBeDefined()
+
+  await ui.input({ key: 'busca', text: 'arq2', kind: 'change' })
+  // arq20 a arq29: 10 itens, a janela volta ao começo.
+  expect(await ui.find({ type: 'Text', text: /1–3 de 10/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /arq20\.txt/ })).toBeDefined()
   await ui.unmount()
 })
 

@@ -8,6 +8,10 @@ declare module 'claude-code' {
       trilha: Shaped<string[]>
       // Caminhos absolutos dos arquivos alterados na sessão, o mais recente primeiro.
       alterados: Shaped<string[]>
+      // Texto da pesquisa na lista de arquivos. Vazio mostra todos.
+      busca: Shaped<string>
+      // Primeira linha da lista de arquivos que a janela mostra, a partir de 0.
+      rolagem: Shaped<number>
     }
   }
 }

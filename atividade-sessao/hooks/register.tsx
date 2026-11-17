@@ -143,6 +143,16 @@ function corDoUso(percentual: number): string {
 }
 
 // 84200 vira `84k`; 1200000 vira `1.2M`.
+// Corta o começo de um texto longo e põe `…` no lugar. Guarda o fim, onde fica
+// o nome do arquivo. Um botão não corta sozinho: o texto quebraria em várias
+// linhas e gastaria a altura do painel.
+function cortarInicio(texto: string, largura: number): string {
+  const letras = Array.from(texto)
+  if (letras.length <= largura) return texto
+
+  return `…${letras.slice(letras.length - (largura - 1)).join('')}`
+}
+
 function abreviar(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`
@@ -204,7 +214,51 @@ const alterados = atom(
   { shape: 'alterados-1' },
 )
 
+// Texto da caixa de pesquisa da lista de arquivos.
+const busca = atom(
+  { plugin: 'atividade-sessao', key: 'busca' } as const,
+  '',
+  { shape: 'busca-1' },
+)
+
+// Primeira linha da lista de arquivos que a janela mostra.
+const rolagem = atom(
+  { plugin: 'atividade-sessao', key: 'rolagem' } as const,
+  0,
+  { shape: 'rolagem-1' },
+)
+
+// Linhas que a roda do mouse move de uma vez na lista de arquivos.
+const LINHAS_POR_ROLAGEM = 3
+
 export const register: Register = on => {
+  // O desenho grava aqui o tamanho da lista e da janela. O hook `ui.scroll`
+  // usa os dois números para limitar a rolagem. Valem só até recarregar o mod.
+  const arquivos = { total: 0, capacidade: 0 }
+
+  // A roda do mouse e as teclas movem a lista de arquivos, não o painel todo.
+  // Se a lista cabe inteira, o painel rola como o motor decide.
+  on('ui.scroll', { component: 'Pane', requestId: PAINEL }, async ($, e, next) => {
+    const maximo = Math.max(0, arquivos.total - arquivos.capacidade)
+    if (maximo === 0) return next(e)
+
+    // Um tique de roda vale 3 linhas. Seta, PageUp e PageDown valem o que o motor manda.
+    const passo =
+      e.pointer !== undefined && Math.abs(e.by) === 1
+        ? e.by * LINHAS_POR_ROLAGEM
+        : e.by
+    try {
+      await update($, rolagem, atual =>
+        Math.min(maximo, Math.max(0, atual + passo)),
+      )
+    } catch {
+      // Se a gravação falhar, o motor rola o painel como de costume.
+      return next(e)
+    }
+
+    return {}
+  })
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'atividade',
@@ -254,7 +308,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PAINEL }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const { Box, Button, Input, Text } = $.ui.resolve(e)
 
     // Insere `@caminho ` na caixa de prompt, onde está o cursor. O texto que a
     // pessoa já digitou fica como está. Se a caixa não aceitar, avisa.
@@ -269,6 +323,8 @@ export const register: Register = on => {
 
     const lista = await read($, chamadas)
     const caminho = await read($, trilha)
+    const termo = await read($, busca)
+    const deslocamento = await read($, rolagem)
     const todosAlterados = await read($, alterados)
     const emExecucao = lista.filter(c => !c.isDone).length
     const recentes = lista.slice(-RECENTES).reverse()
@@ -333,8 +389,55 @@ export const register: Register = on => {
         fixasAtividade -
         1,
     )
-    const visiveis = entradas.slice(0, linhas)
-    const ocultos = entradas.length - visiveis.length
+
+    // Pesquisa: filtra os itens da pasta aberta pelo nome, sem diferenciar
+    // maiúsculas de minúsculas.
+    const consulta = termo.trim().toLowerCase()
+    const filtradas =
+      consulta === ''
+        ? entradas
+        : entradas.filter(f => f.name.toLowerCase().includes(consulta))
+
+    // Janela de rolagem sobre a lista filtrada. O desenho limita o início,
+    // porque a pasta pode ter mudado de tamanho desde a última rolagem.
+    const capacidade = linhas
+    const maximo = Math.max(0, filtradas.length - capacidade)
+    const inicio = Math.min(deslocamento, maximo)
+    const visiveis = filtradas.slice(inicio, inicio + capacidade)
+    const temRolagem = maximo > 0
+    arquivos.total = filtradas.length
+    arquivos.capacidade = capacidade
+
+    // Barra de rolagem: uma coluna com um caractere por linha visível. O
+    // marcador `█` mostra onde a janela está e qual fração da lista ela cobre.
+    const alturaMarcador = Math.min(
+      Math.max(visiveis.length, 1),
+      Math.max(
+        1,
+        Math.round((visiveis.length * capacidade) / Math.max(filtradas.length, 1)),
+      ),
+    )
+    const topoMarcador =
+      maximo === 0
+        ? 0
+        : Math.round(((visiveis.length - alturaMarcador) * inicio) / maximo)
+    const barraRolagem = visiveis.map((_, i) =>
+      i >= topoMarcador && i < topoMarcador + alturaMarcador ? '█' : '│',
+    )
+
+    // Resumo à direita do título: total, resultado da pesquisa ou faixa visível.
+    const resumoArquivos = temRolagem
+      ? `${inicio + 1}–${inicio + visiveis.length} de ${filtradas.length}`
+      : consulta !== ''
+        ? `${filtradas.length} de ${entradas.length}`
+        : `${entradas.length} ${entradas.length === 1 ? 'item' : 'itens'}`
+
+    // Entra em outra pasta. A pesquisa e a rolagem voltam ao começo.
+    const abrirPasta = (novaTrilha: (t: string[]) => string[]) => {
+      void update($, trilha, novaTrilha)
+      void update($, busca, () => '')
+      void update($, rolagem, () => 0)
+    }
 
     // Título do cartão: ícone e nome à esquerda, resumo discreto à direita.
     const cabecalho = (
@@ -492,7 +595,7 @@ export const register: Register = on => {
             '■',
             COR_ARQUIVOS,
             'Arquivos',
-            `${entradas.length} ${entradas.length === 1 ? 'item' : 'itens'}`,
+            resumoArquivos,
           )}
           <Text dimColor wrap="truncate-middle">
             {pasta}
@@ -501,11 +604,37 @@ export const register: Register = on => {
             <Button
               key="voltar"
               plain
-              onPress={() => update($, trilha, t => t.slice(0, -1))}
+              onPress={() => abrirPasta(t => t.slice(0, -1))}
             >
               <Text color="suggestion">‹ voltar</Text>
             </Button>
           )}
+          <Box>
+            <Box flexGrow={1} flexShrink={1}>
+              <Input
+                key="busca"
+                placeholder="Buscar nesta pasta…"
+                value={termo}
+                onInput={texto => {
+                  void update($, busca, () => texto)
+                  void update($, rolagem, () => 0)
+                }}
+                onSubmit={() => {}}
+              />
+            </Box>
+            {termo !== '' && (
+              <Button
+                key="limpar-busca"
+                plain
+                onPress={() => {
+                  void update($, busca, () => '')
+                  void update($, rolagem, () => 0)
+                }}
+              >
+                <Text color="error"> ✕</Text>
+              </Button>
+            )}
+          </Box>
           {erro !== '' && (
             <Text color="error" wrap="truncate-end">
               Erro ao ler a pasta: {erro}
@@ -516,67 +645,77 @@ export const register: Register = on => {
               Pasta vazia.
             </Text>
           )}
-          {visiveis.map(f => {
-            const dele = chave(`${pasta}/${f.name}`)
-            if (f.kind === 'dir') {
-              const temAlterado = prefixosAlterados.some(p =>
-                p.startsWith(`${dele}/`),
-              )
-
-              return (
-                <Button
-                  key={`dir:${f.name}`}
-                  plain
-                  onPress={() => update($, trilha, t => [...t, f.name])}
-                >
-                  <Text>{ICONE_PASTA} </Text>
-                  <Text bold color={COR_ARQUIVOS}>
-                    {f.name}/
-                  </Text>
-                  {temAlterado && <Text color={COR_ALTERADOS}> ●</Text>}
-                </Button>
-              )
-            }
-            const mudou = chavesAlteradas.has(dele)
-
-            const rel = relativo(raiz, `${pasta}/${f.name}`)
-
-            return (
-              <Box justifyContent="space-between">
-                <Box flexShrink={1}>
-                  <Button
-                    key={`arq:${dele}`}
-                    plain
-                    onPress={() => rel !== null && mencionar(rel)}
-                  >
-                    <Text>
-                      {f.kind === 'file' ? iconeArquivo(f.name) : ICONE_LINK}{' '}
-                    </Text>
-                    <Text
-                      color={mudou ? COR_ALTERADOS : undefined}
-                      bold={mudou}
-                      wrap="truncate-end"
-                    >
-                      {f.name}
-                    </Text>
-                    {mudou && <Text color={COR_ALTERADOS}> ●</Text>}
-                  </Button>
-                </Box>
-                {f.kind === 'file' && (
-                  <Box flexShrink={0} marginLeft={1}>
-                    <Text dimColor tabular>
-                      {tamanho(f.size)}
-                    </Text>
-                  </Box>
-                )}
-              </Box>
-            )
-          })}
-          {ocultos > 0 && (
-            <Text dimColor italic>
-              + {ocultos} {ocultos === 1 ? 'item oculto' : 'itens ocultos'}
+          {erro === '' && entradas.length > 0 && filtradas.length === 0 && (
+            <Text dimColor italic wrap="truncate-end">
+              Nenhum item com “{termo.trim()}”.
             </Text>
           )}
+          <Box>
+            <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+              {visiveis.map(f => {
+                const dele = chave(`${pasta}/${f.name}`)
+                if (f.kind === 'dir') {
+                  const temAlterado = prefixosAlterados.some(p =>
+                    p.startsWith(`${dele}/`),
+                  )
+
+                  return (
+                    <Button
+                      key={`dir:${f.name}`}
+                      plain
+                      onPress={() => abrirPasta(t => [...t, f.name])}
+                    >
+                      <Text>{ICONE_PASTA} </Text>
+                      <Text bold color={COR_ARQUIVOS} wrap="truncate-end">
+                        {f.name}/
+                      </Text>
+                      {temAlterado && <Text color={COR_ALTERADOS}> ●</Text>}
+                    </Button>
+                  )
+                }
+                const mudou = chavesAlteradas.has(dele)
+                const rel = relativo(raiz, `${pasta}/${f.name}`)
+
+                return (
+                  <Box justifyContent="space-between">
+                    <Box flexShrink={1}>
+                      <Button
+                        key={`arq:${dele}`}
+                        plain
+                        onPress={() => rel !== null && mencionar(rel)}
+                      >
+                        <Text>
+                          {f.kind === 'file' ? iconeArquivo(f.name) : ICONE_LINK}{' '}
+                        </Text>
+                        <Text
+                          color={mudou ? COR_ALTERADOS : undefined}
+                          bold={mudou}
+                          wrap="truncate-end"
+                        >
+                          {f.name}
+                        </Text>
+                        {mudou && <Text color={COR_ALTERADOS}> ●</Text>}
+                      </Button>
+                    </Box>
+                    {f.kind === 'file' && (
+                      <Box flexShrink={0} marginLeft={1}>
+                        <Text dimColor tabular>
+                          {tamanho(f.size)}
+                        </Text>
+                      </Box>
+                    )}
+                  </Box>
+                )
+              })}
+            </Box>
+            {temRolagem && (
+              <Box flexDirection="column" flexShrink={0} marginLeft={1}>
+                {barraRolagem.map(c => (
+                  <Text color={c === '█' ? COR_ARQUIVOS : COR_BORDA}>{c}</Text>
+                ))}
+              </Box>
+            )}
+          </Box>
         </Box>
 
         <Box
@@ -598,6 +737,12 @@ export const register: Register = on => {
           )}
           {alteradosVisiveis.map(abs => {
             const rel = relativo(raiz, abs)
+            // Largura que sobra para o caminho: o corpo do painel, menos a
+            // borda, o recuo, o ícone com o espaço e 1 coluna de folga.
+            const largura = Math.max(
+              10,
+              e.props.bodyColumns - 4 - LARGURA_ICONE - 1,
+            )
             if (rel === null) {
               // Fora da raiz do projeto: a menção leva o caminho completo.
               return (
@@ -607,15 +752,14 @@ export const register: Register = on => {
                   onPress={() => mencionar(abs)}
                 >
                   <Text>{iconeArquivo(barras(abs))} </Text>
-                  <Text dimColor wrap="truncate-start">
-                    {barras(abs)}
-                  </Text>
+                  <Text dimColor>{cortarInicio(barras(abs), largura)}</Text>
                 </Button>
               )
             }
-            const corte = rel.lastIndexOf('/')
-            const dir = corte >= 0 ? rel.slice(0, corte + 1) : ''
-            const nome = rel.slice(corte + 1)
+            const curto = cortarInicio(rel, largura)
+            const corte = curto.lastIndexOf('/')
+            const dir = corte >= 0 ? curto.slice(0, corte + 1) : ''
+            const nome = curto.slice(corte + 1)
 
             return (
               <Button

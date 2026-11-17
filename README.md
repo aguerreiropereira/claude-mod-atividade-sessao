@@ -4,6 +4,8 @@ Painel lateral para o Claude Code. O painel tem quatro cartões:
 
 1. **Sessão**: projeto, repositório, modelo, barra de contexto e limites de uso de 5 horas e 7 dias.
 2. **Arquivos**: os arquivos da pasta de trabalho, com ícones. Clique em uma pasta para entrar nela. Clique em um arquivo para inserir `@caminho` na caixa de prompt.
+   - Em pasta com muitos itens, a lista rola. Use a roda do mouse sobre o painel. Com o painel em foco, use também as setas, PageUp, PageDown, Home e End. Uma barra à direita mostra a posição, e o resumo do cartão mostra a faixa visível, por exemplo `4–6 de 40`.
+   - O campo **Buscar nesta pasta** filtra os itens da pasta aberta pelo nome. Maiúsculas e minúsculas valem igual. Clique em `✕` para limpar. Entrar em outra pasta também limpa a busca. A busca não entra nas subpastas.
 3. **Alterados na sessão**: os arquivos que o Claude editou nesta sessão. Clique em um arquivo para inserir `@caminho` na caixa de prompt.
 4. **Atividade**: as chamadas de ferramenta mais recentes.
 
