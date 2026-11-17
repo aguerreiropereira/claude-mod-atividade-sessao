@@ -72,8 +72,31 @@ O Claude Code adiciona esta pasta como marketplace local e instala o mod.
 
 ## Atualizar
 
+### Instalou pelo GitHub
+
+1. Rode este comando em um shell:
+   ```
+   claude plugin update atividade-sessao
+   ```
+2. A mensagem `updated from 0.1.0 to 0.2.0` confirma a atualização. Os números mudam com a versão.
+3. Reinicie o Claude Code. A versão nova só vale em uma sessão nova.
+
+A máquina precisa da credencial do GitHub, como na instalação.
+
+Se o comando diz `already at the latest version`, a máquina já tem a versão mais nova do repositório.
+
+### Instalou pela pasta
+
 1. Troque os arquivos desta pasta pela versão nova. Mantenha a pasta no mesmo lugar.
 2. Em uma sessão aberta do Claude Code, digite `/reload-plugins`. Ou abra uma nova sessão.
+
+### Quem mantém o repositório
+
+O Claude Code guarda cada versão do mod em uma pasta própria, com o número de `version` no nome. O teste de atualização usou uma mudança de `version`. Por isso, mude esse número a cada versão nova. Eu não testei o `update` com um commit novo e o mesmo número.
+
+1. Mude o número de `version` em `atividade-sessao/.claude-plugin/plugin.json`.
+2. Faça o commit.
+3. Rode `git push`.
 
 ## Remover
 
