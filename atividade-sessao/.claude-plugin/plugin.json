@@ -1,0 +1,6 @@
+{
+  "name": "atividade-sessao",
+  "version": "0.1.0",
+  "description": "Painel lateral que mostra as chamadas de ferramenta da sessão em tempo real.",
+  "types": "./types/index.d.ts"
+}

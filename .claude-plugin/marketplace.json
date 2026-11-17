@@ -1,0 +1,11 @@
+{
+  "name": "mods-locais",
+  "owner": { "name": "Mods locais" },
+  "plugins": [
+    {
+      "name": "atividade-sessao",
+      "source": "./atividade-sessao",
+      "description": "Painel lateral com dados da sessão, arquivos da pasta de trabalho, arquivos alterados e atividade."
+    }
+  ]
+}
