@@ -599,15 +599,18 @@ export const register: Register = on => {
           {alteradosVisiveis.map(abs => {
             const rel = relativo(raiz, abs)
             if (rel === null) {
+              // Fora da raiz do projeto: a menção leva o caminho completo.
               return (
-                <Box>
+                <Button
+                  key={`alt:${chave(abs)}`}
+                  plain
+                  onPress={() => mencionar(abs)}
+                >
                   <Text>{iconeArquivo(barras(abs))} </Text>
-                  <Box flexShrink={1}>
-                    <Text dimColor wrap="truncate-start">
-                      {barras(abs)}
-                    </Text>
-                  </Box>
-                </Box>
+                  <Text dimColor wrap="truncate-start">
+                    {barras(abs)}
+                  </Text>
+                </Button>
               )
             }
             const corte = rel.lastIndexOf('/')

@@ -220,6 +220,26 @@ test('um arquivo alterado também vira menção ao clicar', async ($, on) => {
   await ui.unmount()
 })
 
+test('um arquivo alterado fora da raiz vira menção com o caminho completo', async ($, on) => {
+  const preenchidos: { text: string; mode?: string }[] = []
+  responder(on, false, preenchidos)
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  await $.tool.call({
+    tool: 'Write',
+    file_path: 'C:\\outra pasta\\notas.txt',
+    content: 'x',
+  })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  await ui.press({ key: 'alt:c:/outra pasta/notas.txt' })
+  // Barras normais, e aspas porque o caminho tem espaço.
+  expect(preenchidos).toEqual([
+    { text: '@"C:/outra pasta/notas.txt" ', mode: 'insert' },
+  ])
+  await ui.unmount()
+})
+
 test('caminho com espaço vai entre aspas na menção', async ($, on) => {
   const preenchidos: { text: string; mode?: string }[] = []
   responder(on, false, preenchidos, true, ['meu arquivo.md'])
