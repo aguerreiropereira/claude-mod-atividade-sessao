@@ -1,6 +1,6 @@
-﻿{
+{
   "name": "atividade-sessao",
-  "version": "0.4.2",
-  "description": "Painel lateral com dados da sessÃ£o, arquivos da pasta, arquivos alterados e atividade. Clique em um arquivo para mencionÃ¡-lo no prompt.",
+  "version": "0.4.3",
+  "description": "Painel lateral com dados da sessão, arquivos da pasta, arquivos alterados e atividade. Clique em um arquivo para mencioná-lo no prompt.",
   "types": "./types/index.d.ts"
 }
