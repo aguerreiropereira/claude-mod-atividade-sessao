@@ -21,11 +21,16 @@ const SUPERFICIES = ['terminal', 'desktop'] as const
 const AGORA = 1_700_000_000_000
 const em = (minutos: number) => new Date(AGORA + minutos * 60_000).toISOString()
 
-const entrada = (name: string, kind: 'file' | 'dir', size = 0) => ({
+const entrada = (
+  name: string,
+  kind: 'file' | 'dir',
+  size = 0,
+  mtimeMs = 0,
+) => ({
   name,
   kind,
   size,
-  mtimeMs: 0,
+  mtimeMs,
   isLink: false,
 })
 
@@ -39,7 +44,8 @@ function responder(
   usoComFalha = false,
   preenchidos: { text: string; mode?: string }[] = [],
   caixaAceita = true,
-  nomesDaRaiz?: string[],
+  // Itens da raiz no lugar da lista padrão: um nome vira arquivo de 10 bytes.
+  itensDaRaiz?: (string | ReturnType<typeof entrada>)[],
   avisos: string[] = [],
 ) {
   on('command.register', () => ({ value: { command: 'atividade' } }))
@@ -84,8 +90,8 @@ function responder(
     // O motor entrega o caminho no formato do sistema: barras invertidas no Windows.
     value: (e.path ?? '').replace(/\\/g, '/').endsWith('/src')
       ? [entrada('app.ts', 'file', 1500), entrada('util.ts', 'file', 300)]
-      : nomesDaRaiz !== undefined
-        ? nomesDaRaiz.map(n => entrada(n, 'file', 10))
+      : itensDaRaiz !== undefined
+        ? itensDaRaiz.map(i => (typeof i === 'string' ? entrada(i, 'file', 10) : i))
         : [
             entrada('src', 'dir'),
             entrada('README.md', 'file', 2048),
@@ -393,6 +399,115 @@ test('a pesquisa sem resultado avisa, e entrar em uma pasta limpa a pesquisa', a
   await ui.press({ key: 'dir:src' })
   expect((await ui.find({ key: 'busca' }))?.text ?? '').toBe('')
   expect(await ui.find({ type: 'Text', text: /util\.ts/ })).toBeDefined()
+  await ui.unmount()
+})
+
+// Nomes dos arquivos .txt da lista, na ordem em que o painel os desenha.
+const ordemDosTxt = async (ui: { findAll: (q: object) => Promise<{ text?: string }[]> }) =>
+  (await ui.findAll({ type: 'Text', text: /\.txt$/ })).map(x => x.text)
+
+test('o botão de ordem alterna entre nome, tamanho e data', async ($, on) => {
+  responder(on, false, [], true, [
+    entrada('src', 'dir'),
+    entrada('a.txt', 'file', 10, 100),
+    entrada('b.txt', 'file', 5000, 50),
+    entrada('c.txt', 'file', 300, 900),
+  ])
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+
+  // Começa por nome.
+  expect(await ui.find({ type: 'Text', text: /↕ nome/ })).toBeDefined()
+  expect(await ordemDosTxt(ui)).toEqual(['a.txt', 'b.txt', 'c.txt'])
+
+  // Tamanho: o maior primeiro.
+  await ui.press({ key: 'ordem' })
+  expect(await ui.find({ type: 'Text', text: /↕ tamanho/ })).toBeDefined()
+  expect(await ordemDosTxt(ui)).toEqual(['b.txt', 'c.txt', 'a.txt'])
+
+  // Data: o mais novo primeiro.
+  await ui.press({ key: 'ordem' })
+  expect(await ui.find({ type: 'Text', text: /↕ data/ })).toBeDefined()
+  expect(await ordemDosTxt(ui)).toEqual(['c.txt', 'a.txt', 'b.txt'])
+
+  // Volta para nome. A pasta fica sempre acima dos arquivos.
+  await ui.press({ key: 'ordem' })
+  expect(await ordemDosTxt(ui)).toEqual(['a.txt', 'b.txt', 'c.txt'])
+  expect(await ui.find({ key: 'dir:src' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('o botão de ocultar esconde itens com ponto e pastas de dependências', async ($, on) => {
+  responder(on, false, [], true, [
+    entrada('.git', 'dir'),
+    entrada('node_modules', 'dir'),
+    entrada('src', 'dir'),
+    entrada('.env', 'file', 10),
+    entrada('a.txt', 'file', 10),
+  ])
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+
+  // Começa escondendo: 3 itens saem da lista e do resumo.
+  expect(await ui.find({ type: 'Text', text: /3 ocultos/ })).toBeDefined()
+  expect(await ui.find({ key: 'dir:src' })).toBeDefined()
+  expect(await ui.find({ key: 'dir:.git' })).toBeUndefined()
+  expect(await ui.find({ key: 'dir:node_modules' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /\.env/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /2 itens/ })).toBeDefined()
+
+  // Desligado: tudo aparece.
+  await ui.press({ key: 'ocultar' })
+  expect(await ui.find({ type: 'Text', text: /tudo à mostra/ })).toBeDefined()
+  expect(await ui.find({ key: 'dir:.git' })).toBeDefined()
+  expect(await ui.find({ key: 'dir:node_modules' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /\.env/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /5 itens/ })).toBeDefined()
+
+  // Ligado de novo, a pesquisa ainda acha o que está escondido.
+  await ui.press({ key: 'ocultar' })
+  expect(await ui.find({ key: 'dir:.git' })).toBeUndefined()
+  await ui.input({ key: 'busca', text: 'git', kind: 'change' })
+  expect(await ui.find({ key: 'dir:.git' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /busca em tudo/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('uma pasta só com itens ocultos avisa', async ($, on) => {
+  responder(on, false, [], true, [entrada('.env', 'file', 10)])
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /Só itens ocultos aqui/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Pasta vazia/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('Enter na pesquisa menciona o primeiro resultado', async ($, on) => {
+  const preenchidos: { text: string; mode?: string }[] = []
+  const avisos: string[] = []
+  responder(on, false, preenchidos, true, undefined, avisos)
+  await $.session.start({ cwd: 'C:/proj', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+
+  // Um arquivo.
+  await ui.input({ key: 'busca', text: 'read', kind: 'change' })
+  await ui.input({ key: 'busca', text: 'read', kind: 'submit' })
+  expect(preenchidos).toEqual([{ text: '@README.md ', mode: 'insert' }])
+
+  // Uma pasta leva `/` no fim.
+  await ui.input({ key: 'busca', text: 'sr', kind: 'change' })
+  await ui.input({ key: 'busca', text: 'sr', kind: 'submit' })
+  expect(preenchidos[1]).toEqual({ text: '@src/ ', mode: 'insert' })
+
+  // Sem resultado: avisa e não insere nada.
+  await ui.input({ key: 'busca', text: 'zzz', kind: 'change' })
+  await ui.input({ key: 'busca', text: 'zzz', kind: 'submit' })
+  expect(preenchidos.length).toBe(2)
+  expect(avisos).toEqual(['Nada para mencionar.'])
   await ui.unmount()
 })
 

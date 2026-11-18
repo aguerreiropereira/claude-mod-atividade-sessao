@@ -1,9 +1,15 @@
 import { atom, read, update } from 'claude-code'
 import type { FsEntry, Register } from 'claude-code'
 
-import type { Chamada } from '../types'
+import type { Chamada, Ordem } from '../types'
 
 const PAINEL = 'atividade-sessao'
+
+// Ordens da lista de arquivos, na sequência em que o botão as alterna.
+const ORDENS: Ordem[] = ['nome', 'tamanho', 'data']
+
+// Nomes que o botão "ocultar" esconde, além de todo nome com ponto no começo.
+const NOMES_RUIDOSOS = new Set(['node_modules', '__pycache__'])
 const TITULO = 'Arquivos e atividade'
 const RECENTES = 5
 const MAX_ALTERADOS = 5
@@ -143,6 +149,32 @@ function corDoUso(percentual: number): string {
 }
 
 // 84200 vira `84k`; 1200000 vira `1.2M`.
+// Item que o botão "ocultar" esconde: nome com ponto no começo (`.git`,
+// `.env`) ou uma pasta de dependências geradas.
+function ehRuidoso(nome: string): boolean {
+  return nome.startsWith('.') || NOMES_RUIDOSOS.has(nome)
+}
+
+// Compara dois itens da lista. Pasta vem antes de arquivo, em qualquer ordem.
+// Tamanho e data põem o maior e o mais novo primeiro. Pasta não tem tamanho
+// útil: pastas se ordenam por nome. Empate se desfaz pelo nome.
+function compararEntradas(ordem: Ordem) {
+  return (a: FsEntry, b: FsEntry): number => {
+    const pastaA = a.kind === 'dir' ? 0 : 1
+    const pastaB = b.kind === 'dir' ? 0 : 1
+    if (pastaA !== pastaB) return pastaA - pastaB
+
+    if (a.kind !== 'dir' && ordem === 'tamanho' && a.size !== b.size) {
+      return b.size - a.size
+    }
+    if (a.kind !== 'dir' && ordem === 'data' && a.mtimeMs !== b.mtimeMs) {
+      return b.mtimeMs - a.mtimeMs
+    }
+
+    return a.name.localeCompare(b.name)
+  }
+}
+
 // Corta o começo de um texto longo e põe `…` no lugar. Guarda o fim, onde fica
 // o nome do arquivo. Um botão não corta sozinho: o texto quebraria em várias
 // linhas e gastaria a altura do painel.
@@ -226,6 +258,19 @@ const rolagem = atom(
   { plugin: 'atividade-sessao', key: 'rolagem' } as const,
   0,
   { shape: 'rolagem-1' },
+)
+
+const ordem = atom(
+  { plugin: 'atividade-sessao', key: 'ordem' } as const,
+  'nome',
+  { shape: 'ordem-1' },
+)
+
+// Começa escondendo os itens ruidosos: a pessoa liga de volta com um clique.
+const ocultar = atom(
+  { plugin: 'atividade-sessao', key: 'ocultar' } as const,
+  true,
+  { shape: 'ocultar-1' },
 )
 
 // Linhas que a roda do mouse move de uma vez na lista de arquivos.
@@ -325,6 +370,8 @@ export const register: Register = on => {
     const caminho = await read($, trilha)
     const termo = await read($, busca)
     const deslocamento = await read($, rolagem)
+    const ordemAtual = await read($, ordem)
+    const esconder = await read($, ocultar)
     const todosAlterados = await read($, alterados)
     const emExecucao = lista.filter(c => !c.isDone).length
     const recentes = lista.slice(-RECENTES).reverse()
@@ -360,11 +407,7 @@ export const register: Register = on => {
     } catch (falha) {
       erro = String(falha)
     }
-    entradas.sort((a, b) => {
-      const pastaA = a.kind === 'dir' ? 0 : 1
-      const pastaB = b.kind === 'dir' ? 0 : 1
-      return pastaA - pastaB || a.name.localeCompare(b.name)
-    })
+    entradas.sort(compararEntradas(ordemAtual))
 
     // Arquivos alterados: o conjunto marca a lista de arquivos, a fatia vira o cartão.
     const chavesAlteradas = new Set(todosAlterados.map(chave))
@@ -374,7 +417,9 @@ export const register: Register = on => {
 
     // Linhas livres para a lista de arquivos. Cada cartão gasta 2 linhas de
     // borda e 1 de título. Os demais itens entram na soma de linhas fixas.
-    const fixasArquivos = 3 + 1 + (caminho.length > 0 ? 1 : 0) + 1
+    // Linhas fixas: título e bordas (3), caminho (1), voltar (0 ou 1), campo de
+    // pesquisa (1) e a linha dos botões de ordem e de ocultar (1).
+    const fixasArquivos = 3 + 1 + (caminho.length > 0 ? 1 : 0) + 1 + 1
     const fixasAlterados =
       3 + Math.max(alteradosVisiveis.length, 1) + (alteradosOcultos > 0 ? 1 : 0)
     const fixasAtividade = 3 + Math.max(recentes.length, 1)
@@ -391,12 +436,17 @@ export const register: Register = on => {
     )
 
     // Pesquisa: filtra os itens da pasta aberta pelo nome, sem diferenciar
-    // maiúsculas de minúsculas.
+    // maiúsculas de minúsculas. A pesquisa olha todos os itens, também os
+    // que o botão "ocultar" esconderia: quem digita `.git` quer achá-lo.
+    // Sem pesquisa, "ocultar" tira os itens ruidosos da lista.
     const consulta = termo.trim().toLowerCase()
+    const ruidosos = entradas.filter(f => ehRuidoso(f.name)).length
     const filtradas =
-      consulta === ''
-        ? entradas
-        : entradas.filter(f => f.name.toLowerCase().includes(consulta))
+      consulta !== ''
+        ? entradas.filter(f => f.name.toLowerCase().includes(consulta))
+        : esconder
+          ? entradas.filter(f => !ehRuidoso(f.name))
+          : entradas
 
     // Janela de rolagem sobre a lista filtrada. O desenho limita o início,
     // porque a pasta pode ter mudado de tamanho desde a última rolagem.
@@ -430,7 +480,39 @@ export const register: Register = on => {
       ? `${inicio + 1}–${inicio + visiveis.length} de ${filtradas.length}`
       : consulta !== ''
         ? `${filtradas.length} de ${entradas.length}`
-        : `${entradas.length} ${entradas.length === 1 ? 'item' : 'itens'}`
+        : `${filtradas.length} ${filtradas.length === 1 ? 'item' : 'itens'}`
+
+    // Enter na pesquisa: menciona o primeiro resultado, na ordem da lista.
+    // O caminho de uma pasta leva `/` no fim.
+    const mencionarPrimeiro = () => {
+      const primeiro = filtradas[0]
+      if (primeiro === undefined) {
+        $.ui.toast('Nada para mencionar.')
+        return
+      }
+      const rel = relativo(raiz, `${pasta}/${primeiro.name}`)
+      if (rel === null) return
+      mencionar(primeiro.kind === 'dir' ? `${rel}/` : rel)
+    }
+
+    // Passa para a próxima ordem: nome, tamanho, data, nome...
+    const alternarOrdem = () => {
+      const proxima = ORDENS[(ORDENS.indexOf(ordemAtual) + 1) % ORDENS.length]
+      void update($, ordem, () => proxima ?? 'nome')
+      void update($, rolagem, () => 0)
+    }
+
+    const alternarOcultar = () => {
+      void update($, ocultar, atual => !atual)
+      void update($, rolagem, () => 0)
+    }
+
+    // Texto do botão de ocultar. Durante a pesquisa a lista inclui tudo.
+    const rotuloOcultar = !esconder
+      ? '● tudo à mostra'
+      : consulta !== ''
+        ? '◌ busca em tudo'
+        : `◌ ${ruidosos} ${ruidosos === 1 ? 'oculto' : 'ocultos'}`
 
     // Entra em outra pasta. A pesquisa e a rolagem voltam ao começo.
     const abrirPasta = (novaTrilha: (t: string[]) => string[]) => {
@@ -619,7 +701,8 @@ export const register: Register = on => {
                   void update($, busca, () => texto)
                   void update($, rolagem, () => 0)
                 }}
-                onSubmit={() => {}}
+                onSubmit={mencionarPrimeiro}
+                submitLabel="mencionar"
               />
             </Box>
             {termo !== '' && (
@@ -635,6 +718,16 @@ export const register: Register = on => {
               </Button>
             )}
           </Box>
+          <Box justifyContent="space-between">
+            <Button key="ordem" plain onPress={alternarOrdem}>
+              <Text color="suggestion">↕ {ordemAtual}</Text>
+            </Button>
+            <Button key="ocultar" plain onPress={alternarOcultar}>
+              <Text color={esconder ? COR_ARQUIVOS : undefined} dimColor={!esconder}>
+                {rotuloOcultar}
+              </Text>
+            </Button>
+          </Box>
           {erro !== '' && (
             <Text color="error" wrap="truncate-end">
               Erro ao ler a pasta: {erro}
@@ -645,11 +738,22 @@ export const register: Register = on => {
               Pasta vazia.
             </Text>
           )}
-          {erro === '' && entradas.length > 0 && filtradas.length === 0 && (
-            <Text dimColor italic wrap="truncate-end">
-              Nenhum item com “{termo.trim()}”.
-            </Text>
-          )}
+          {erro === '' &&
+            entradas.length > 0 &&
+            filtradas.length === 0 &&
+            consulta !== '' && (
+              <Text dimColor italic wrap="truncate-end">
+                Nenhum item com “{termo.trim()}”.
+              </Text>
+            )}
+          {erro === '' &&
+            entradas.length > 0 &&
+            filtradas.length === 0 &&
+            consulta === '' && (
+              <Text dimColor italic wrap="truncate-end">
+                Só itens ocultos aqui.
+              </Text>
+            )}
           <Box>
             <Box flexDirection="column" flexGrow={1} flexShrink={1}>
               {visiveis.map(f => {
