@@ -493,6 +493,10 @@ export const register: Register = on => {
       const rel = relativo(raiz, `${pasta}/${primeiro.name}`)
       if (rel === null) return
       mencionar(primeiro.kind === 'dir' ? `${rel}/` : rel)
+      // A caixa de texto se esvazia ao enviar. A pesquisa esvazia junto,
+      // para o filtro não ficar ativo sem aparecer.
+      void update($, busca, () => '')
+      void update($, rolagem, () => 0)
     }
 
     // Passa para a próxima ordem: nome, tamanho, data, nome...

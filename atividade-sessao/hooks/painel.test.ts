@@ -495,8 +495,11 @@ test('Enter na pesquisa menciona o primeiro resultado', async ($, on) => {
 
   // Um arquivo.
   await ui.input({ key: 'busca', text: 'read', kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: /^1 de \d+$/ })).toBeDefined()
   await ui.input({ key: 'busca', text: 'read', kind: 'submit' })
   expect(preenchidos).toEqual([{ text: '@README.md ', mode: 'insert' }])
+  // Depois do Enter a pesquisa se esvazia: a lista volta inteira.
+  expect(await ui.find({ type: 'Text', text: /^1 de \d+$/ })).toBeUndefined()
 
   // Uma pasta leva `/` no fim.
   await ui.input({ key: 'busca', text: 'sr', kind: 'change' })
