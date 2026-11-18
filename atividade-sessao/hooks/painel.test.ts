@@ -5,7 +5,7 @@ const PAINEL = {
   component: 'Pane',
   requestId: 'atividade-sessao',
   props: {
-    title: 'Arquivos e atividade',
+    title: '📊 Arquivos',
     isFocused: false,
     bodyColumns: 48,
     placement: 'dock',

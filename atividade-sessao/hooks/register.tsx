@@ -10,7 +10,8 @@ const ORDENS: Ordem[] = ['nome', 'tamanho', 'data']
 
 // Nomes que o botão "ocultar" esconde, além de todo nome com ponto no começo.
 const NOMES_RUIDOSOS = new Set(['node_modules', '__pycache__'])
-const TITULO = 'Arquivos e atividade'
+// Ícone e uma palavra: a aba do painel mostra pouco texto.
+const TITULO = '📊 Arquivos'
 const RECENTES = 5
 const MAX_ALTERADOS = 5
 const GUARDA_ALTERADOS = 100
